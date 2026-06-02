@@ -1,0 +1,17 @@
+# Build scratch + outputs — never commit large artifacts
+build/
+out/
+logs/
+hpe-components/
+hpe-addon/
+
+# Image artifacts
+*.iso
+*-depot.zip
+*-viblist.csv
+*-report.txt
+*.log
+
+# OS cruft
+Thumbs.db
+.DS_Store
