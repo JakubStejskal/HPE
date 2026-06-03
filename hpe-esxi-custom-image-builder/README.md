@@ -25,11 +25,21 @@ HPE-supported slipstream method.
 # 1) one-time setup (installs PowerCLI + Python deps, configures the backend)
 .\Install-Prereqs.ps1                 # CurrentUser; use -Scope AllUsers (elevated) for machine-wide
 
-# 2) build
+# 2) build — just run it; a guided wizard opens file-pickers for the inputs
+.\Build-HpeEsxiImage.ps1
+```
+
+Run with **no parameters** and it walks you through it: a file-picker window opens for the base
+depot and the HPE SPP ISO (or paste a full path — quotes from "Copy as path" are handled), then it
+shows a build plan and asks to confirm. Prefer the command line? Pass parameters instead:
+
+```powershell
 .\Build-HpeEsxiImage.ps1 `
     -BaseDepot 'D:\iso\VMware-ESXi-9.1.0.0.25370933-depot.zip' `
     -SppIso    'D:\iso\gen11spp-2026.03.00.00.iso'
 ```
+
+Any missing required input is prompted for.
 
 The build auto-detects the ESXi version (e.g. 9.1 → platform code `910`), picks the matching
 `HPE-910-...-Addon-depot.zip` from the SPP, merges it onto the base profile, validates, and writes

@@ -71,11 +71,25 @@ What it sets up (and what you'd do by hand otherwise):
 
 ## 4. Quick start
 
+### Easiest — just run it (interactive)
+
+```powershell
+.\Build-HpeEsxiImage.ps1
+```
+
+With no parameters it starts a guided wizard: a **file-picker window opens** for the base depot
+and for the HPE SPP ISO (or you can paste a full path — surrounding quotes from "Copy as path"
+are handled). It then shows a build plan and asks you to confirm. Nothing to memorize.
+
+### Or pass parameters (scriptable)
+
 ```powershell
 .\Build-HpeEsxiImage.ps1 `
     -BaseDepot 'D:\iso\VMware-ESXi-9.1.0.0.25370933-depot.zip' `
     -SppIso    'D:\iso\gen11spp-2026.03.00.00.iso'
 ```
+
+If you give some but not all required inputs, the script prompts only for what's missing.
 
 That's it. The script auto‑detects the ESXi version (→ platform code `910`), picks the matching
 `HPE-910-...-Addon-depot.zip` from the SPP, merges, validates, and writes the deliverables to

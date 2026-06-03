@@ -72,7 +72,7 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)] [string]$BaseDepot,
+    [string]$BaseDepot,
     [string]$SppIso,
     [string]$AddonDepot,
     [ValidatePattern('^\d{3}$')] [string]$Platform,
@@ -108,19 +108,141 @@ function Clear-Depots {
     try { Get-EsxSoftwareDepot -ErrorAction SilentlyContinue | ForEach-Object { Remove-EsxSoftwareDepot $_ -ErrorAction SilentlyContinue } } catch {}
 }
 
-# ---------- 0. resolve paths ----------
+# ---- interactive input helpers ----
+function Clear-PathInput([string]$s){
+    if ([string]::IsNullOrWhiteSpace($s)) { return $null }
+    $s = $s.Trim()
+    # strip one layer of surrounding quotes (e.g. paths copied via "Copy as path")
+    if ($s.Length -ge 2 -and (($s[0] -eq '"' -and $s[-1] -eq '"') -or ($s[0] -eq "'" -and $s[-1] -eq "'"))) {
+        $s = $s.Substring(1, $s.Length - 2)
+    }
+    return $s.Trim()
+}
+
+function Show-FilePicker {
+    # Opens a native Open-File dialog. Hosted in an STA runspace so it works under
+    # PowerShell 7 (MTA) too. Returns the chosen path, or $null if cancelled/unavailable.
+    param([string]$Title,[string]$Filter='All files (*.*)|*.*',[string]$InitialDir)
+    try {
+        $code = {
+            param($Title,$Filter,$InitialDir)
+            Add-Type -AssemblyName System.Windows.Forms
+            $owner = New-Object System.Windows.Forms.Form -Property @{ TopMost = $true; ShowInTaskbar = $false; Opacity = 0 }
+            $dlg = New-Object System.Windows.Forms.OpenFileDialog
+            $dlg.Title = $Title; $dlg.Filter = $Filter; $dlg.Multiselect = $false
+            if ($InitialDir -and (Test-Path -LiteralPath $InitialDir)) { $dlg.InitialDirectory = $InitialDir }
+            $r = $dlg.ShowDialog($owner)
+            $owner.Dispose()
+            if ($r -eq [System.Windows.Forms.DialogResult]::OK) { $dlg.FileName } else { '' }
+        }
+        $ps = [PowerShell]::Create()
+        $rs = [RunspaceFactory]::CreateRunspace(); $rs.ApartmentState='STA'; $rs.ThreadOptions='ReuseThread'; $rs.Open()
+        $ps.Runspace = $rs
+        [void]$ps.AddScript($code).AddArgument($Title).AddArgument($Filter).AddArgument($InitialDir)
+        $res = $ps.Invoke() | Select-Object -Last 1
+        $ps.Dispose(); $rs.Close()
+        if ([string]::IsNullOrWhiteSpace($res)) { return $null } else { return [string]$res }
+    } catch { return $null }
+}
+
+function Read-FilePath {
+    # Asks for a file: opens a picker first, then accepts a typed/pasted path. Loops until valid.
+    param([string]$Prompt,[string]$Filter='All files (*.*)|*.*',[string]$InitialDir)
+    Write-Host ""
+    Write-Host (">> " + $Prompt) -ForegroundColor White
+    Write-Host "   (a file-picker window will open; close/cancel it to type a path instead)" -ForegroundColor DarkGray
+    $gui = Show-FilePicker -Title $Prompt -Filter $Filter -InitialDir $InitialDir
+    if ($gui -and (Test-Path -LiteralPath $gui)) { Ok ("selected: {0}" -f $gui); return (Resolve-Path -LiteralPath $gui).Path }
+    while ($true) {
+        $typed = Clear-PathInput (Read-Host "   Paste full path (or 'b' to browse again)")
+        if (-not $typed) { Warn "Nothing entered."; continue }
+        if ($typed -in 'b','B') {
+            $gui = Show-FilePicker -Title $Prompt -Filter $Filter -InitialDir $InitialDir
+            if ($gui -and (Test-Path -LiteralPath $gui)) { Ok ("selected: {0}" -f $gui); return (Resolve-Path -LiteralPath $gui).Path }
+            continue
+        }
+        if (Test-Path -LiteralPath $typed) { return (Resolve-Path -LiteralPath $typed).Path }
+        Warn "Not found: $typed  — check the path and try again."
+    }
+}
+
+# ---------- 0. resolve inputs (interactive wizard if missing) ----------
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
+$BaseDepot  = Clear-PathInput $BaseDepot
+$SppIso     = Clear-PathInput $SppIso
+$AddonDepot = Clear-PathInput $AddonDepot
+
+$needBase = (-not $BaseDepot) -or (-not (Test-Path -LiteralPath $BaseDepot))
+$needSrc  = if ($Method -eq 'Packages') { -not $SppIso } else { (-not $AddonDepot) -and (-not $SppIso) }
+$interactive = $false
+
+if ($needBase -or $needSrc) {
+    $interactive = $true
+    Write-Host ""
+    Write-Host "===== HPE Custom ESXi Image Builder - interactive setup =====" -ForegroundColor White
+    Write-Host "No (valid) input parameters detected - I'll walk you through it." -ForegroundColor DarkGray
+    Write-Host "A file-picker opens for each file; or paste a full path (surrounding quotes are OK)." -ForegroundColor DarkGray
+    Write-Host "Tip: you can also run it directly, e.g.:  .\Build-HpeEsxiImage.ps1 -BaseDepot <...-depot.zip> -SppIso <...spp.iso>" -ForegroundColor DarkGray
+}
+
+$initDir = if ($BaseDepot) { try { Split-Path -LiteralPath $BaseDepot } catch { $here } } else { $here }
+
+if ($needBase) {
+    if ($BaseDepot) { Warn "BaseDepot not found: $BaseDepot" }
+    $BaseDepot = Read-FilePath -Prompt 'Select the VMware ESXi BASE depot   (VMware-ESXi-...-depot.zip)' `
+                    -Filter 'ESXi base depot (*-depot.zip;*.zip)|*-depot.zip;*.zip|All files (*.*)|*.*' -InitialDir $initDir
+}
+$BaseDepot = (Resolve-Path -LiteralPath $BaseDepot).Path
+$initDir   = try { Split-Path -LiteralPath $BaseDepot } catch { $here }
+
+if ($needSrc) {
+    if ($Method -eq 'Packages') {
+        $SppIso = Read-FilePath -Prompt 'Select the HPE SPP ISO   (required for -Method Packages)' `
+                    -Filter 'SPP ISO (*.iso)|*.iso|All files (*.*)|*.*' -InitialDir $initDir
+    } else {
+        Write-Host ""
+        Write-Host ">> Where are the HPE driver/management components?" -ForegroundColor White
+        Write-Host "   [1] HPE SPP ISO            (recommended - I'll find the matching AddOn inside)" -ForegroundColor Gray
+        Write-Host "   [2] HPE AddOn depot (.zip) (HPE-<platform>-...-Addon-depot.zip)" -ForegroundColor Gray
+        $choice = (Read-Host "   Choose 1 or 2 [1]").Trim()
+        if ($choice -eq '2') {
+            $AddonDepot = Read-FilePath -Prompt 'Select the HPE AddOn depot   (HPE-...-Addon-depot.zip)' `
+                            -Filter 'HPE AddOn depot (HPE-*Addon-depot.zip;*.zip)|HPE-*Addon-depot.zip;*.zip|All files (*.*)|*.*' -InitialDir $initDir
+        } else {
+            $SppIso = Read-FilePath -Prompt 'Select the HPE SPP ISO   (e.g. ...gen11spp...iso)' `
+                        -Filter 'SPP ISO (*.iso)|*.iso|All files (*.*)|*.*' -InitialDir $initDir
+        }
+    }
+}
+
+# validate any CLI-supplied source paths (interactive ones are already validated)
+if ($AddonDepot) { if (-not (Test-Path -LiteralPath $AddonDepot)) { Die "AddonDepot not found: $AddonDepot" }; $AddonDepot = (Resolve-Path -LiteralPath $AddonDepot).Path }
+if ($SppIso)     { if (-not (Test-Path -LiteralPath $SppIso))     { Die "SppIso not found: $SppIso" };       $SppIso     = (Resolve-Path -LiteralPath $SppIso).Path }
+
+# scratch + output dirs (override OutDir interactively; just press Enter for the default)
 if (-not $WorkDir) { $WorkDir = Join-Path $here 'build' }
 if (-not $OutDir)  { $OutDir  = Join-Path $WorkDir 'out' }
+if ($interactive) {
+    $od = Clear-PathInput (Read-Host ("`n>> Output folder for the ISO + bundle [{0}]" -f $OutDir))
+    if ($od) { $OutDir = $od }
+}
 $null = New-Item -ItemType Directory -Force -Path $WorkDir,$OutDir
 $logDir = Join-Path $WorkDir 'logs'; $null = New-Item -ItemType Directory -Force -Path $logDir
 
-if (-not (Test-Path $BaseDepot)) { Die "BaseDepot not found: $BaseDepot" }
-$BaseDepot = (Resolve-Path $BaseDepot).Path
-if ($AddonDepot) { if (-not (Test-Path $AddonDepot)) { Die "AddonDepot not found: $AddonDepot" }; $AddonDepot = (Resolve-Path $AddonDepot).Path }
-if ($SppIso)     { if (-not (Test-Path $SppIso))     { Die "SppIso not found: $SppIso" };     $SppIso     = (Resolve-Path $SppIso).Path }
-if ($Method -eq 'AddOn' -and -not $AddonDepot -and -not $SppIso) { Die "Provide -SppIso or -AddonDepot (or use -Method Packages with -SppIso)." }
-if ($Method -eq 'Packages' -and -not $SppIso) { Die "-Method Packages requires -SppIso." }
+# confirm the plan
+$srcShow = if ($AddonDepot) { "AddOn : $AddonDepot" } else { "SPP   : $SppIso" }
+Write-Host ""
+Write-Host "===== Build plan =====" -ForegroundColor White
+Write-Host ("  Base depot : {0}" -f $BaseDepot)
+Write-Host ("  HPE source : {0}" -f $srcShow)
+Write-Host ("  Method     : {0}" -f $Method)
+Write-Host ("  Vendor     : {0}" -f $Vendor)
+Write-Host ("  Output dir : {0}" -f $OutDir)
+if ($interactive) {
+    if ((Read-Host "Proceed with the build? [Y/n]").Trim() -match '^(n|no)$') {
+        Write-Host "Aborted by user." -ForegroundColor Yellow; return
+    }
+}
 
 $transcript = Join-Path $logDir ('build-{0}.log' -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
 try { Start-Transcript -Path $transcript -Force | Out-Null } catch {}
@@ -315,6 +437,7 @@ try {
     Write-Host ""
     Write-Host ("Deliverables in: {0}" -f $OutDir) -ForegroundColor Green
     Get-ChildItem $OutDir -Filter "$Name*" | Select-Object Name,Length | Format-Table -AutoSize
+    if ($interactive) { Write-Host ""; [void](Read-Host "All done - press Enter to close") }
 }
 finally {
     # ---------- 9. cleanup ----------
