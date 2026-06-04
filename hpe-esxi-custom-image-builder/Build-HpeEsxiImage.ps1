@@ -42,7 +42,9 @@
     Output directory for deliverables. Default: <WorkDir>\out.
 
 .PARAMETER Name
-    Image profile + output base name. Default: ESXi-<build>-HPE-Custom.
+    Image profile + output base name. Default: the HPE Custom Image convention derived
+    automatically from the inputs, e.g. VMware-ESXi-9.1.0.0.25370933-HPE-910.0.0.11.1.0.13-Mar2026
+    (-> <Name>.iso and <Name>-depot.zip).
 
 .PARAMETER Vendor
     Vendor string stamped on the profile. Default: HPE.
@@ -80,6 +82,7 @@ param(
     [string]$WorkDir,
     [string]$OutDir,
     [string]$Name,
+    [string]$NamePrefix = '',
     [string]$Vendor = 'HPE',
     [ValidateSet('PartnerSupported','VMwareAccepted','VMwareCertified','CommunitySupported')]
     [string]$AcceptanceLevel = 'PartnerSupported',
@@ -166,6 +169,24 @@ function Read-FilePath {
     }
 }
 
+function Get-HpeImageName {
+    # Builds the HPE Custom Image naming convention, e.g.
+    #   VMware-ESXi-9.1.0.0.25370933-HPE-910.0.0.11.1.0.13-Mar2026
+    # from the base esx-base version and the AddOn depot filename.
+    param([string]$EsxBaseVersion,[string]$AddonDepotPath,[string]$Platform)
+    $build = ($EsxBaseVersion -replace '-', '.')         # 9.1.0-0.25370933 -> 9.1.0.0.25370933
+    $av = $null; $date = $null
+    if ($AddonDepotPath) {
+        $af = Split-Path -Leaf $AddonDepotPath
+        if     ($af -match '^HPE-(.+?)-([A-Za-z]{3}\d{4})-Addon-depot\.zip$') { $av=$matches[1]; $date=$matches[2] }
+        elseif ($af -match '^HPE-(.+?)-Addon-depot\.zip$')                    { $av=$matches[1] }
+    }
+    if (-not $av) { $av = $Platform }                    # fallback (e.g. -Method Packages)
+    $name = "VMware-ESXi-$build-HPE-$av"
+    if ($date) { $name += "-$date" }
+    return $name
+}
+
 # ---------- 0. resolve inputs (interactive wizard if missing) ----------
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BaseDepot  = Clear-PathInput $BaseDepot
@@ -227,6 +248,10 @@ if (-not $OutDir)  { $OutDir  = Join-Path $WorkDir 'out' }
 if ($interactive) {
     $od = Clear-PathInput (Read-Host ("`n>> Output folder for the ISO + bundle [{0}]" -f $OutDir))
     if ($od) { $OutDir = $od }
+    if (-not $Name) {
+        $pfx = (Read-Host ">> Optional output-name prefix, e.g. 'PB-' (Enter for none)").Trim()
+        if ($pfx) { $NamePrefix = $pfx }
+    }
 }
 $null = New-Item -ItemType Directory -Force -Path $WorkDir,$OutDir
 $logDir = Join-Path $WorkDir 'logs'; $null = New-Item -ItemType Directory -Force -Path $logDir
@@ -305,7 +330,6 @@ try {
     }
     $baseProf = Get-EsxImageProfile | Where-Object Name -match 'standard' | Select-Object -First 1
     if (-not $baseProf) { $baseProf = Get-EsxImageProfile | Select-Object -First 1 }
-    if (-not $Name) { $Name = "ESXi-$($baseProf.Name -replace '^ESXi-','' -replace '-standard$','')-HPE-Custom" }
     Ok ("Base profile: {0}  (esx-base {1}, platform code {2})" -f $baseProf.Name,$esxBase.Version,$Platform)
 
     # ---------- 4. locate / add HPE content ----------
@@ -356,6 +380,10 @@ try {
 
     if (-not $hpe -or $hpe.Count -eq 0) { Die "No HPE components found to merge. Check Platform/Method." }
     Ok ("HPE components to merge: {0}" -f $hpe.Count)
+
+    # derive HPE-convention output name (unless -Name was given)
+    if (-not $Name) { $Name = $NamePrefix + (Get-HpeImageName -EsxBaseVersion $esxBase.Version -AddonDepotPath $AddonDepot -Platform $Platform) }
+    Ok ("Output name : {0}" -f $Name)
 
     # ---------- 5. clone + merge ----------
     Info "Cloning base profile and merging HPE components"
