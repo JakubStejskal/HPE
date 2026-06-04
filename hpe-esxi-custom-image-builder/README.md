@@ -52,6 +52,25 @@ the deliverables to `.\build\out\`:
 
 `Get-Help .\Build-HpeEsxiImage.ps1 -Full` for all parameters. See **COOKBOOK.md** for details.
 
+## Supported ESXi versions (not just 9.1)
+
+The builder is **version-agnostic**. It reads `esx-base` from your base bundle, derives the HPE
+platform code (`X.Y.Z` → `XYZ`) and auto-selects the matching `HPE-<code>-…-Addon-depot.zip` from
+the SPP. Output naming adapts too.
+
+| Target ESXi | esx-base | code | AddOn picked |
+|---|---|---|---|
+| 8.0 U2 | 8.0.2 | `802` | `HPE-802-…-Addon-depot.zip` |
+| 8.0 U3 (incl. U3x, e.g. "U3j") | 8.0.3 | `803` | `HPE-803-…-Addon-depot.zip` |
+| 9.0 | 9.0.0 | `900` | `HPE-900-…-Addon-depot.zip` |
+| 9.1 | 9.1.0 | `910` | `HPE-910-…-Addon-depot.zip` |
+
+You provide (1) the **base offline bundle for that exact build** and (2) an **SPP that ships the
+matching `HPE-<code>` AddOn** (for your server generation) — or pass the standalone *HPE Custom
+AddOn* with `-AddonDepot <zip>`. A patch level (the "j" in *8.0 U3j*) maps to the same update code
+(`803`) and uses the same AddOn. Overrides: `-Platform <code>`, `-AddonDepot <zip>`, `-Method Packages`.
+See **COOKBOOK.md → §4b** for full details.
+
 ## Requirements
 
 - Windows + Windows PowerShell 5.1 or PowerShell 7.x

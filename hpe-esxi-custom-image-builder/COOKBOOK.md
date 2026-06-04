@@ -110,6 +110,34 @@ Point directly at an already‑extracted AddOn (no SPP mount):
 
 ---
 
+## 4b. Supported ESXi versions (8.0 U2 / U3, 9.0, 9.1, …)
+
+The script is **version-agnostic** — it is not hard-wired to 9.1. It reads `esx-base` from the base
+offline bundle, derives the HPE **platform code** (`X.Y.Z` → `XYZ`), and selects the matching
+`HPE-<code>-…-Addon-depot.zip` from the SPP's `\manifest\vmw\`. The output name adapts automatically.
+
+| Target ESXi | esx-base | platform code | AddOn picked from SPP |
+|---|---|---|---|
+| 8.0 U2 | 8.0.2 | `802` | `HPE-802-…-Addon-depot.zip` |
+| 8.0 U3 (incl. U3x, e.g. "U3j") | 8.0.3 | `803` | `HPE-803-…-Addon-depot.zip` |
+| 9.0 | 9.0.0 | `900` | `HPE-900-…-Addon-depot.zip` |
+| 9.1 | 9.1.0 | `910` | `HPE-910-…-Addon-depot.zip` |
+
+**To build a different version you need two things:**
+1. The **base offline bundle for that exact build** (e.g. for 8.0 U3j: `VMware-ESXi-8.0.3-…-depot.zip`).
+2. An **SPP that ships the matching `HPE-<code>` AddOn** (for your server generation), **or** the
+   standalone *HPE Custom AddOn for ESXi `<version>`* passed via `-AddonDepot <zip>`.
+
+Notes:
+- A patch/express level (the "j" in *8.0 U3j*) is just a different base build number — it maps to the
+  same update's platform code (`803`) and uses the same `HPE-803` AddOn (HPE drivers carry across
+  patch levels of an update, as they do across the 9.0→9.1 minor bump).
+- The SPP is per **server generation** (Gen10 / Gen11 / …) — feed the script the SPP for your hardware.
+- If a given SPP does not contain your version's AddOn, either use a different SPP or download the
+  *HPE Custom AddOn for ESXi `<version>`* offline bundle and pass it with `-AddonDepot`.
+- Overrides if auto-detection isn't what you want: `-Platform <code>`, `-AddonDepot <zip>`, or the
+  `-Method Packages` fallback (extracts the per-component VMware bundles from the SPP `\packages\`).
+
 ## 5. Parameters
 
 | Parameter | Default | Notes |
