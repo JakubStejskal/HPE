@@ -165,7 +165,7 @@ function Read-FilePath {
             continue
         }
         if (Test-Path -LiteralPath $typed) { return (Resolve-Path -LiteralPath $typed).Path }
-        Warn "Not found: $typed  — check the path and try again."
+        Warn "Not found: $typed  - check the path and try again."
     }
 }
 
@@ -321,7 +321,7 @@ try {
     Info "Adding base depot"
     Add-EsxSoftwareDepot $BaseDepot | Out-Null
     $esxBase = Get-EsxSoftwarePackage -Name esx-base -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $esxBase) { Die "esx-base not found in base depot — not a valid ESXi offline bundle?" }
+    if (-not $esxBase) { Die "esx-base not found in base depot - not a valid ESXi offline bundle?" }
     $buildId = ($esxBase.Version -split '-')[-1] -replace '^\d+\.','' ; $buildId = ($esxBase.Version -split '\.')[-1]
     $verTriplet = ($esxBase.Version -split '-')[0]            # e.g. 9.1.0
     if (-not $Platform) {

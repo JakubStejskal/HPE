@@ -2,7 +2,7 @@
 .SYNOPSIS
     Installs and verifies everything Build-HpeEsxiImage.ps1 needs:
     VMware PowerCLI (VMware.ImageBuilder) + the Python Image Builder backend modules,
-    and points PowerCLI at Python. Idempotent — safe to re-run.
+    and points PowerCLI at Python. Idempotent - safe to re-run.
 
 .DESCRIPTION
     1. Ensures TLS 1.2, the NuGet provider, and a trusted PSGallery.
@@ -55,7 +55,7 @@ function Ok($m)  { Write-Host ("[+] " + $m) -ForegroundColor Green }
 function Warn($m){ Write-Host ("[!] " + $m) -ForegroundColor Yellow }
 function Die($m) { Write-Host ("[X] " + $m) -ForegroundColor Red; exit 1 }
 
-Write-Host "=== HPE ESXi Image Builder — prerequisite installer ===" -ForegroundColor White
+Write-Host "=== HPE ESXi Image Builder - prerequisite installer ===" -ForegroundColor White
 Info ("PowerShell {0} ({1})" -f $PSVersionTable.PSVersion, $PSVersionTable.PSEdition)
 
 # ---------- elevation check for AllUsers ----------
@@ -83,7 +83,7 @@ $existing = Get-Module -ListAvailable VMware.ImageBuilder | Sort-Object Version 
 if ($existing -and -not $Force) {
     Ok ("VMware.ImageBuilder already installed: {0}" -f $existing.Version)
 } else {
-    Info ("Installing VMware.PowerCLI (Scope {0}) — this can take several minutes" -f $Scope)
+    Info ("Installing VMware.PowerCLI (Scope {0}) - this can take several minutes" -f $Scope)
     $p = @{ Name='VMware.PowerCLI'; Scope=$Scope; Force=$true; AllowClobber=$true; SkipPublisherCheck=$true }
     Install-Module @p
     $existing = Get-Module -ListAvailable VMware.ImageBuilder | Sort-Object Version -Descending | Select-Object -First 1
@@ -121,12 +121,17 @@ Ok ("  $pyver")
 
 # ---------- 3b. pip modules ----------
 Info "Installing Python Image Builder modules (six psutil pyopenssl lxml)"
-& $py -m pip install --upgrade pip 2>&1 | Out-Null
-$pipArgs = @('-m','pip','install','six','psutil','pyopenssl','lxml')
+# NOTE: pip prints harmless warnings (e.g. "Scripts not on PATH") to stderr. Under Windows
+# PowerShell 5.1 with $ErrorActionPreference='Stop' + 2>&1, native stderr is turned into a
+# terminating NativeCommandError. So we relax EAP for the native pip calls, suppress that
+# specific warning, and treat the Python import test below as the authoritative result.
+$eap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+& $py -m pip install --upgrade --no-warn-script-location pip 2>&1 | ForEach-Object { Write-Verbose "$_" }
+$pipArgs = @('-m','pip','install','--no-warn-script-location','six','psutil','pyopenssl','lxml')
 if ($Force) { $pipArgs += '--upgrade' }
-& $py @pipArgs 2>&1 | ForEach-Object { Write-Verbose $_ }
-# verify imports
-$check = & $py -c "import six,psutil,OpenSSL,lxml;print('ok')" 2>&1
+& $py @pipArgs 2>&1 | ForEach-Object { Write-Verbose "$_" }
+$check = (& $py -c "import six, psutil, OpenSSL, lxml; print('ok')" 2>&1) -join ' '
+$ErrorActionPreference = $eap
 if ($check -match 'ok') { Ok "Python modules import OK (six, psutil, OpenSSL, lxml)" }
 else { Die "Python module verification failed: $check" }
 
