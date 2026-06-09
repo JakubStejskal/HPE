@@ -91,6 +91,22 @@ if ($existing -and -not $Force) {
     Ok ("Installed VMware.ImageBuilder {0}" -f $existing.Version)
 }
 
+# ---------- 2b. ensure the LATEST VMware.ImageBuilder ----------
+# The VMware.PowerCLI meta-module can pin an older Image Builder. Newer ESXi 9.1
+# *patch* depots need the matching (9.1-era) Image Builder, otherwise
+# New-EsxImageProfile fails with "File path ... is claimed by multiple non-overlay
+# VIBs" between esx-base and esxio-base. So upgrade the standalone module if older.
+try {
+    $latestIB = (Find-Module VMware.ImageBuilder -ErrorAction Stop).Version
+    $haveIB   = (Get-Module -ListAvailable VMware.ImageBuilder | Sort-Object Version -Descending | Select-Object -First 1).Version
+    if ([version]$haveIB -lt [version]$latestIB) {
+        Info ("Updating VMware.ImageBuilder {0} -> {1}" -f $haveIB,$latestIB)
+        Install-Module VMware.ImageBuilder -Scope $Scope -Force -AllowClobber -SkipPublisherCheck
+        $haveIB = (Get-Module -ListAvailable VMware.ImageBuilder | Sort-Object Version -Descending | Select-Object -First 1).Version
+        Ok ("VMware.ImageBuilder now {0}" -f $haveIB)
+    } else { Ok ("VMware.ImageBuilder is current ({0})" -f $haveIB) }
+} catch { Warn ("Could not check/update VMware.ImageBuilder: {0}" -f $_.Exception.Message) }
+
 # ---------- 3. Python ----------
 function Find-Python {
     param([string]$Hint)

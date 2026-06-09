@@ -234,6 +234,8 @@ dependency/acceptance resolution. The report shows the exact split so you can se
 | Python / `Get-EsxImageProfile` errors on export | `pip install six psutil pyopenssl lxml`; pass `-PythonPath` |
 | Harmless `pkg_resources is deprecated` / a `Thread-… OSError` traceback | Cosmetic noise from the Image Builder Python helper at teardown — ignore; the build is unaffected |
 | `No matching AddOn for platform <code>` | The SPP has no AddOn for that ESXi line. Re‑run with `-Platform <code>` for a line it does have, or use `-Method Packages` |
+| `New-EsxImageProfile … File path of '…edge.json' is claimed by multiple non-overlay VIBs: {esx-base, esxio-base}` | Your **Image Builder is older than the ESXi build** you're using (common with newer 9.1 **patch** depots). Update it: `Install-Module VMware.ImageBuilder -Force -AllowClobber -SkipPublisherCheck` (or just re‑run `Install-Prereqs.ps1`, which now auto-updates it), then retry. It's a VMware packaging/validation issue (KB 90157), not a bug in the merge |
+| pip warning `Scripts … not on PATH` aborts on PowerShell 5.1 | Fixed — `Install-Prereqs.ps1` now relaxes error handling around pip. The warning is harmless (`python -m pip` doesn't need `pip.exe` on PATH) |
 | A VIB fails with a **dependency**/**acceptance** error | The script lists the exact VIB and stops by design. Don't force it — usually means a wrong base/SPP pairing; verify the SPP supports your ESXi version (HPE SPP release notes) |
 | `bnxtnet`/`bnxtroce` conflict | Handled automatically — they're added as a set. If you script your own merge, add matched pairs together |
 | AllUsers install permission denied | Run PowerShell **as Administrator**, or use `-Scope CurrentUser` |
