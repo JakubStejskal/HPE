@@ -187,6 +187,22 @@ function Get-HpeImageName {
     return $name
 }
 
+function Get-IbPythonVersions {
+    # the 3.x minor versions for which the installed Image Builder ships a Python backend
+    # (folders <module>\server\python-3XX). A Python newer than these makes the backend
+    # misbehave -> New-EsxImageProfile "edge.json claimed by multiple non-overlay VIBs".
+    $m = Get-Module -ListAvailable VMware.ImageBuilder | Sort-Object Version -Descending | Select-Object -First 1
+    if (-not $m) { return @() }
+    # folders live under <ModuleBase>\<framework>\server\python-3XX
+    @(Get-ChildItem $m.ModuleBase -Recurse -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^python-3(\d+)$' } |
+        ForEach-Object { [int]($_.Name -replace '^python-3','') } | Sort-Object -Unique)
+}
+function Get-PyMinor([string]$exe){
+    try { $o = (& $exe -c "import sys;print(sys.version_info[1])" 2>$null); if ($o) { return [int]("$o".Trim()) } } catch {}
+    return $null
+}
+
 # ---------- 0. resolve inputs (interactive wizard if missing) ----------
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $BaseDepot  = Clear-PathInput $BaseDepot
@@ -282,21 +298,37 @@ try {
     Import-Module VMware.ImageBuilder -ErrorAction Stop 3>$null
     Ok ("VMware.ImageBuilder {0}" -f $ib.Version)
 
-    if (-not $PythonPath) {
-        $cfg = (Get-PowerCLIConfiguration -Scope User -ErrorAction SilentlyContinue).PythonPath
-        if ($cfg -and (Test-Path $cfg)) { $PythonPath = $cfg }
-        else {
-            foreach ($c in @((Get-Command python -ErrorAction SilentlyContinue).Source,
-                             'C:\Python312\python.exe','C:\Python311\python.exe','C:\Python310\python.exe')) {
-                if ($c -and (Test-Path $c)) { $PythonPath = $c; break }
+    # Pick a Python the Image Builder backend actually supports. A too-new Python (e.g. 3.14)
+    # otherwise fails later with "edge.json is claimed by multiple non-overlay VIBs".
+    $ibPy    = Get-IbPythonVersions
+    $ibPyTxt = if ($ibPy) { "3.$($ibPy[0])-3.$($ibPy[-1])" } else { "unknown" }
+    if ($PythonPath) {
+        if (-not (Test-Path $PythonPath)) { Die "PythonPath not found: $PythonPath" }
+        $m = Get-PyMinor $PythonPath
+        if ($ibPy -and $m -and ($m -notin $ibPy)) {
+            Die ("Python 3.$m is NOT supported by VMware.ImageBuilder $($ib.Version) (supported: Python $ibPyTxt). " +
+                 "A too-new Python causes 'edge.json claimed by multiple non-overlay VIBs'. " +
+                 "Install a supported Python (e.g. winget install Python.Python.3.12) and pass -PythonPath.")
+        }
+    } else {
+        $cands = @()
+        $cands += (Get-PowerCLIConfiguration -Scope User -ErrorAction SilentlyContinue).PythonPath
+        $cands += (Get-Command python -All -ErrorAction SilentlyContinue | Where-Object { $_.Source -notmatch 'WindowsApps' } | ForEach-Object Source)
+        $cands += (Get-ChildItem "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | ForEach-Object FullName)
+        $cands += 'C:\Python313\python.exe','C:\Python312\python.exe','C:\Python311\python.exe','C:\Python310\python.exe'
+        $cands = $cands | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+        foreach ($c in $cands) { $m = Get-PyMinor $c; if ($m -and (-not $ibPy -or $m -in $ibPy)) { $PythonPath = $c; break } }
+        if (-not $PythonPath) {
+            if ($cands) {
+                $seen = (($cands | ForEach-Object { "3.$(Get-PyMinor $_)" }) | Select-Object -Unique) -join ', '
+                Die ("No Image-Builder-compatible Python found (detected: $seen; need Python $ibPyTxt). " +
+                     "Install e.g. winget install Python.Python.3.12, then re-run or pass -PythonPath.")
             }
+            Die "Python not found. Install Python ($ibPyTxt) + 'pip install six psutil pyopenssl lxml', then pass -PythonPath."
         }
     }
-    if (-not $PythonPath -or -not (Test-Path $PythonPath)) {
-        Die "Python not found. Install Python 3.x + 'pip install six psutil pyopenssl lxml', then pass -PythonPath."
-    }
     Set-PowerCLIConfiguration -PythonPath $PythonPath -ParticipateInCeip $false -Scope Session -Confirm:$false 2>$null | Out-Null
-    Ok ("Python backend: {0}" -f $PythonPath)
+    Ok ("Python backend: {0}  (Python 3.{1}; IB supports {2})" -f $PythonPath,(Get-PyMinor $PythonPath),$ibPyTxt)
 
     $freeGB = [math]::Round((Get-PSDrive -Name ($WorkDir.Substring(0,1)) -ErrorAction SilentlyContinue).Free/1GB,1)
     if ($freeGB -and $freeGB -lt 8) { Warn "Only $freeGB GB free in WorkDir drive (recommend >= 8 GB)." } else { Ok "Free disk: $freeGB GB" }

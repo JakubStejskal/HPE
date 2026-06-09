@@ -107,33 +107,56 @@ try {
     } else { Ok ("VMware.ImageBuilder is current ({0})" -f $haveIB) }
 } catch { Warn ("Could not check/update VMware.ImageBuilder: {0}" -f $_.Exception.Message) }
 
-# ---------- 3. Python ----------
+# ---------- 3. Python (must match an Image Builder backend version) ----------
+# Image Builder ships a Python backend only for specific 3.x versions (folders
+# <module>\server\python-3XX). A too-new Python (e.g. 3.14) makes the backend misbehave
+# and the build later fails with "edge.json claimed by multiple non-overlay VIBs".
+function Get-IbPythonVersions {
+    $m = Get-Module -ListAvailable VMware.ImageBuilder | Sort-Object Version -Descending | Select-Object -First 1
+    if (-not $m) { return @() }
+    # folders live under <ModuleBase>\<framework>\server\python-3XX
+    @(Get-ChildItem $m.ModuleBase -Recurse -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^python-3(\d+)$' } |
+        ForEach-Object { [int]($_.Name -replace '^python-3','') } | Sort-Object -Unique)
+}
+function Get-PyMinor([string]$exe){ try { $o=(& $exe -c "import sys;print(sys.version_info[1])" 2>$null); if($o){return [int]("$o".Trim())} } catch {}; return $null }
 function Find-Python {
-    param([string]$Hint)
+    param([string]$Hint,[int[]]$Supported)
     $cands = @()
     if ($Hint) { $cands += $Hint }
-    $cands += (Get-Command python  -ErrorAction SilentlyContinue | Where-Object { $_.Source -notmatch 'WindowsApps' }).Source
-    $cands += (Get-Command python3 -ErrorAction SilentlyContinue | Where-Object { $_.Source -notmatch 'WindowsApps' }).Source
-    $cands += 'C:\Python312\python.exe','C:\Python311\python.exe','C:\Python310\python.exe','C:\Python313\python.exe'
-    foreach ($c in $cands) { if ($c -and (Test-Path $c)) { return $c } }
+    $cands += (Get-Command python  -ErrorAction SilentlyContinue | Where-Object { $_.Source -notmatch 'WindowsApps' } | ForEach-Object Source)
+    $cands += (Get-Command python3 -ErrorAction SilentlyContinue | Where-Object { $_.Source -notmatch 'WindowsApps' } | ForEach-Object Source)
+    $cands += (Get-ChildItem "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | ForEach-Object FullName)
+    $cands += 'C:\Python313\python.exe','C:\Python312\python.exe','C:\Python311\python.exe','C:\Python310\python.exe'
+    $cands = $cands | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+    if ($Supported) { foreach($c in $cands){ $mm=Get-PyMinor $c; if($mm -and ($mm -in $Supported)){ return $c } } }
+    if ($cands) { return $cands[0] }
     return $null
 }
 
-$py = Find-Python -Hint $PythonPath
-if (-not $py -and $InstallPython) {
+$ibPy    = Get-IbPythonVersions
+$ibPyTxt = if ($ibPy) { "3.$($ibPy[0])-3.$($ibPy[-1])" } else { "unknown" }
+
+$py = Find-Python -Hint $PythonPath -Supported $ibPy
+# if nothing found, or the only Python is unsupported, optionally install a supported one
+$needInstall = (-not $py) -or ($ibPy -and ((Get-PyMinor $py) -notin $ibPy))
+if ($needInstall -and $InstallPython) {
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Info "Installing Python 3.12 via winget"
+        Info "Installing supported Python 3.12 via winget"
         winget install -e --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements --silent
         $env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')
-        $py = Find-Python
+        $py = Find-Python -Supported $ibPy
     } else { Warn "winget not available; cannot auto-install Python." }
 }
-if (-not $py) {
-    Die "Python 3.x not found. Install it (https://www.python.org/ or 'winget install Python.Python.3.12') then re-run, or pass -PythonPath."
-}
+if (-not $py) { Die "Python 3.x not found. Install a supported version ($ibPyTxt), e.g. 'winget install Python.Python.3.12', then re-run or pass -PythonPath." }
 Ok ("Python: {0}" -f $py)
-$pyver = (& $py --version) 2>&1
-Ok ("  $pyver")
+$pyMinor = Get-PyMinor $py
+Ok ("  Python 3.$pyMinor   (Image Builder supports $ibPyTxt)")
+if ($ibPy -and ($pyMinor -notin $ibPy)) {
+    Warn ("Python 3.$pyMinor is NOT supported by the installed Image Builder (needs $ibPyTxt).")
+    Warn  "Image builds will fail with 'edge.json claimed by multiple non-overlay VIBs'."
+    Warn  "Install a supported Python (e.g. winget install Python.Python.3.12), then re-run with -PythonPath - or re-run this script with -InstallPython."
+}
 
 # ---------- 3b. pip modules ----------
 Info "Installing Python Image Builder modules (six psutil pyopenssl lxml)"
