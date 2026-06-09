@@ -75,6 +75,7 @@ See **COOKBOOK.md → §4b** for full details.
 
 - Windows + Windows PowerShell 5.1 or PowerShell 7.x
 - VMware PowerCLI 13+ (`VMware.ImageBuilder`) with a working Python backend — handled by `Install-Prereqs.ps1`
+- **Python 3.7–3.13 (use 3.12).** Image Builder bundles a backend only for these versions — **do not use Python 3.14+**, or builds fail with *"edge.json … claimed by multiple non-overlay VIBs"*. `Install-Prereqs.ps1 -InstallPython` fetches a supported one; the build also auto-skips an unsupported Python and refuses a too-new one with a clear message.
 - ~8 GB free disk; 7-Zip only for the `-Method Packages` fallback
 - A VMware ESXi base offline bundle (`-depot.zip`) and an HPE SPP ISO
 

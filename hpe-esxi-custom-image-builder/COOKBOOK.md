@@ -43,14 +43,20 @@ What it sets up (and what you'd do by hand otherwise):
   Install-Module VMware.PowerCLI -Scope CurrentUser -Force -AllowClobber
   ```
   (Use `-Scope AllUsers` from an **elevated** prompt for a machine‑wide install.)
-- **Python 3.x** — Image Builder's backend for ISO/bundle export — plus its modules:
+- **Python — a version the Image Builder backend supports.** Image Builder bundles its Python
+  backend only for specific 3.x versions (currently **Python 3.7–3.13**). **Do NOT use Python 3.14+**
+  — a too-new Python makes the backend misbehave and the build fails later with
+  *"edge.json … is claimed by multiple non-overlay VIBs"*. **Python 3.12 is the safe choice.**
+  Then add the backend modules:
   ```powershell
   python -m pip install six psutil pyopenssl lxml
   ```
-  Point PowerCLI at it once (the installer and the build script also auto‑detect):
+  Point PowerCLI at it once (the installer and the build script also auto‑detect, and will skip an
+  unsupported Python if a supported one is present):
   ```powershell
   Set-PowerCLIConfiguration -PythonPath 'C:\Python312\python.exe' -Scope User -Confirm:$false
   ```
+  No supported Python yet? `Install-Prereqs.ps1 -InstallPython` fetches Python 3.12 via winget.
 - **~8 GB free disk** in the scratch directory.
 - **7‑Zip** — only required for the `-Method Packages` fallback (not for the default AddOn method).
 
@@ -234,7 +240,7 @@ dependency/acceptance resolution. The report shows the exact split so you can se
 | Python / `Get-EsxImageProfile` errors on export | `pip install six psutil pyopenssl lxml`; pass `-PythonPath` |
 | Harmless `pkg_resources is deprecated` / a `Thread-… OSError` traceback | Cosmetic noise from the Image Builder Python helper at teardown — ignore; the build is unaffected |
 | `No matching AddOn for platform <code>` | The SPP has no AddOn for that ESXi line. Re‑run with `-Platform <code>` for a line it does have, or use `-Method Packages` |
-| `New-EsxImageProfile … File path of '…edge.json' is claimed by multiple non-overlay VIBs: {esx-base, esxio-base}` | Your **Image Builder is older than the ESXi build** you're using (common with newer 9.1 **patch** depots). Update it: `Install-Module VMware.ImageBuilder -Force -AllowClobber -SkipPublisherCheck` (or just re‑run `Install-Prereqs.ps1`, which now auto-updates it), then retry. It's a VMware packaging/validation issue (KB 90157), not a bug in the merge |
+| `New-EsxImageProfile … File path of '…edge.json' is claimed by multiple non-overlay VIBs: {esx-base, esxio-base}` | **Your Python is newer than the Image Builder backend supports** (most often **Python 3.14**). Image Builder ships a backend only for Python 3.7–3.13, and a too-new Python breaks the overlay validation. **Fix:** install a supported Python and use it — `winget install -e --id Python.Python.3.12`, then re-run (the build auto-picks the supported one, or pass `-PythonPath …\Python312\python.exe`). The current build script refuses an unsupported Python up front with a clear message. (Keeping `VMware.ImageBuilder` current via `Install-Prereqs.ps1` is also recommended.) Related: VMware KB 90157 |
 | pip warning `Scripts … not on PATH` aborts on PowerShell 5.1 | Fixed — `Install-Prereqs.ps1` now relaxes error handling around pip. The warning is harmless (`python -m pip` doesn't need `pip.exe` on PATH) |
 | A VIB fails with a **dependency**/**acceptance** error | The script lists the exact VIB and stops by design. Don't force it — usually means a wrong base/SPP pairing; verify the SPP supports your ESXi version (HPE SPP release notes) |
 | `bnxtnet`/`bnxtroce` conflict | Handled automatically — they're added as a set. If you script your own merge, add matched pairs together |
